@@ -1,10 +1,8 @@
 import sys
-import socket
+# import socket
 import asyncio
 import logging
 import random
-import select
-import threading
 from enum import Enum
 
 if len(sys.argv) != 2:  # Checking if Port is entered as an argument.
@@ -25,38 +23,41 @@ HOST = '127.0.0.1'
 PORT = int(sys.argv[1])
 matchMakingClients = list()
 
-with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as serverSocket:
-    serverSocket.bind((HOST, PORT))
 
-
-def startServer():
+def startGameServer():
     loop = asyncio.get_event_loop()
     co_routine = asyncio.start_server(pair_clients, HOST, PORT, loop=loop)
 
     server = loop.run_until_complete(co_routine)
 
-    # Serve requests until Ctrl+C is pressed
-    print('Serving on {}'.format(server.sockets[0].getsockname()))
+    gameServer = format(server.sockets[0].getsockname())
+    print(f"Game server running on {gameServer}")
+    print(f"Use Command+C or Ctrl+C to end the game server")
     try:
         loop.run_forever()
-    except endGame:
+        print(endGame)
+        if endGame:
+            server.close()
+            loop.run_until_complete(server.wait_closed())
+
+            loop.close()
+
+    except KeyboardInterrupt:
         pass
+        server.close()
+        loop.run_until_complete(server.wait_closed())
 
-    # Close the server
-    server.close()
-    loop.run_until_complete(server.wait_closed())
-
-    loop.close()
+        loop.close()
 
 
 async def pair_clients(reader, writer):
-    for clients in matchMakingClients:
-        if clients[1] is None:
-            clients[1] = (reader, writer)
-            await handle_game(clients[0], clients[1])
-            clients[0][1].close()
-            clients[1][1].close()
-            matchMakingClients.remove(clients)
+    for players in matchMakingClients:
+        if players[1] is None:
+            players[1] = (reader, writer)
+            await handle_game(players[0], players[1])
+            players[0][1].close()
+            players[1][1].close()
+            matchMakingClients.remove(players)
             return
 
     matchMakingClients.append([(reader, writer), None])
@@ -64,62 +65,56 @@ async def pair_clients(reader, writer):
 
 async def handle_game(player1, player2):
     split_deck = shuffleDeck()
-    c1_cards = split_deck[0]
-    c2_cards = split_deck[1]
+    p1_deck = split_deck[0]
+    p2_deck = split_deck[1]
 
-    c1_used = [False] * 26
-    c2_used = [False] * 26
+    p1_used_cards = [False] * 26
+    p2_used_cards = [False] * 26
 
     try:
-        f_client_data = await player1[0].readexactly(2)
-        s_client_data = await player2[0].readexactly(2)
+        p1_data = await player1[0].readexactly(2)
+        p2_data = await player2[0].readexactly(2)
 
-        if (f_client_data[1] != 0) or s_client_data[1] != 0:
-            print('ERROR... User does not enter in 0 for the first time')
+        if (p1_data[1] != 0) or p2_data[1] != 0:
+            print('Invalid first command')
             kill_game(player1[1], player2[1])
             kill_game(player1[1].get_extra_info('socket'),
                       player2[1].get_extra_info('socket'))
             return
 
-        # Clients are ready for their cards
-        player1[1].write(bytes(([Command.GAMESTART.value] + c1_cards)))
-        player2[1].write(bytes(([Command.GAMESTART.value] + c2_cards)))
+        player1[1].write(bytes(([Command.GAMESTART.value] + p1_deck)))     #Gamestart and issuing cards to the players
+        player2[1].write(bytes(([Command.GAMESTART.value] + p2_deck)))
 
         total_turns = 0
 
         while total_turns < 26:
 
-            f_client_data = await player1[0].readexactly(2)
-            s_client_data = await player2[0].readexactly(2)
+            p1_data = await player1[0].readexactly(2)
+            p2_data = await player2[0].readexactly(2)
 
-            # Check if first byte was 'play card'
-            if f_client_data[0] != 2 and s_client_data[0] != 2:
+            if p1_data[0] != 2 and p2_data[0] != 2:  # Checking for playcard command
                 print('Error... User does not enter in 2.')
                 kill_game(player1[1], player2[1])
                 kill_game(player1[1].get_extra_info('socket'),
                           player2[1].get_extra_info('socket'))
                 return
 
-            # Check if card is in deck
-
-            if check_card(f_client_data[1], split_deck[0]) is False \
-                    or check_card(s_client_data[1], split_deck[1]) is False:
+            if check_card(p1_data[1], split_deck[0]) is False or check_card(p2_data[1],
+                                                                            split_deck[1]) is False:          # Check if card is in deck
                 print('Error... A clients card does not match card dealt')
                 kill_game(player1[1], player2[1])
                 kill_game(player1[1].get_extra_info('socket'),
                           player2[1].get_extra_info('socket'))
                 return
 
-            # Check if card was already used
-            for x in range(0, 26):
+            for card in range(0, 26):                                      # Checking for already pre used card
 
-                if f_client_data[1] == c1_cards[x] or \
-                        s_client_data[1] == c2_cards[x]:
+                if p1_data[1] == p1_deck[card] or p2_data[1] == p2_deck[card]:
 
-                    if f_client_data[1] == c1_cards[x]:
+                    if p1_data[1] == p1_deck[card]:
 
-                        if c1_used[x] is False:
-                            c1_used[x] = True
+                        if p1_used_cards[card] is False:
+                            p1_used_cards[card] = True
                         else:
                             print('Error: A client tried to use '
                                   'the same card again ')
@@ -128,9 +123,9 @@ async def handle_game(player1, player2):
                                       player2[1].get_extra_info('socket'))
                             return
 
-                    if s_client_data[1] == c2_cards[x]:
-                        if c2_used[x] is False:
-                            c2_used[x] = True
+                    if p2_data[1] == p2_deck[card]:
+                        if p2_used_cards[card] is False:
+                            p2_used_cards[card] = True
                         else:
                             print('Error: A client tried to use '
                                   'the same card again ')
@@ -139,15 +134,12 @@ async def handle_game(player1, player2):
                                       player2[1].get_extra_info('socket'))
                             return
 
-            # Get the results for the first and second client
-            c1_result = compare_cards(f_client_data[1], s_client_data[1])
-            c2_result = compare_cards(s_client_data[1], f_client_data[1])
+            c1_result = compare_cards(p1_data[1], p2_data[1])
+            c2_result = compare_cards(p2_data[1], p1_data[1])
 
-            # Concat the command to send with the result
             c1_send_result = [Command.PLAYRESULT.value, c1_result]
             c2_send_result = [Command.PLAYRESULT.value, c2_result]
 
-            # Write back to the client
             player1[1].write(bytes(c1_send_result))
             player2[1].write(bytes(c2_send_result))
 
@@ -172,19 +164,19 @@ async def handle_game(player1, player2):
 
 
 def shuffleDeck():
-    deck_size = 52
-    deck = [index for index in range(deck_size)]
+    numberOfCards = 52
+    deck = [index for index in range(numberOfCards)]
     random.shuffle(deck)
     first_hand = []
     second_hand = []
 
     # Probably more efficient ways of doing this (slicing)
     while len(deck) > 0:
-        dealt_card = deck.pop()
+        shuffledCard = deck.pop()
         if len(first_hand) < 26:
-            first_hand.append(dealt_card)
+            first_hand.append(shuffledCard)
         else:
-            second_hand.append(dealt_card)
+            second_hand.append(shuffledCard)
 
     both_hands = [first_hand, second_hand]
     return both_hands
@@ -206,7 +198,6 @@ def compare_cards(card1, card2):
     first_card = card1 % 13
     second_card = card2 % 13
 
-    # Return values changed here to match "RESULTS"
     if first_card < second_card:
         return 2
     elif first_card == second_card:
@@ -216,4 +207,4 @@ def compare_cards(card1, card2):
 
 
 print(f"War game server started. \n Waiting for players to connect...")
-startServer()
+startGameServer()

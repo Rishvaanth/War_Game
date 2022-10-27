@@ -1,12 +1,11 @@
 import sys
-import socket
 import asyncio
 import logging
 from enum import Enum
 
 if len(sys.argv) != 3:
     print(
-        f"Correct usage: script, IP address, port number")  # Checking if the arguments were input in the correct format.
+        f"Correct usage: script, IP address of the game server, port number")  # Checking if port and IP addressess were input.
     exit()
 
 HOST = str(sys.argv[1])
@@ -21,32 +20,24 @@ class Command(Enum):
 
 
 class Result(Enum):
-    """
-    The byte values sent as the payload byte of a PLAYRESULT message.
-    """
     WIN = 0
     DRAW = 1
     LOSE = 2
 
 
 async def client(host, port, loop):
-    """
-    Run an individual client on a given event loop.
-    You do not need to change this function.
-    """
     try:
 
         reader, writer = await asyncio.open_connection(host, port, loop=loop)
-        # send want game
         myscore = 0
 
-        writer.write(b"\0\0")
-        card_msg = await reader.readexactly(27)
+        writer.write(b"\0\0")                       # want game
+        card_msg = await reader.readexactly(27)     # expecting payload of the shuffled hand
 
         for card in card_msg[1:]:
 
-            writer.write(bytes([Command.PLAYCARD.value, card]))
-            result = await reader.readexactly(2)
+            writer.write(bytes([Command.PLAYCARD.value, card]))     #play card
+            result = await reader.readexactly(2)    #reading result
 
             if result[1] == Result.WIN.value:
                 myscore += 1
@@ -59,8 +50,7 @@ async def client(host, port, loop):
         else:
             result = "drew"
 
-        print("Result: ", result)
-        logging.debug("Game complete, I %s", result)
+        print("Game complete, I %s", result)
         writer.close()
         return 1
     except ConnectionResetError:
