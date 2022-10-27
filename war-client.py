@@ -50,7 +50,7 @@ async def client(host, port, loop):
         else:
             result = "drew"
 
-        print("Game complete, I %s", result)
+        print(f"Game complete, you {result}!")
         writer.close()
         return 1
     except ConnectionResetError:
